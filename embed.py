@@ -65,4 +65,4 @@ def embed_data_into_image(image_path, secret_data, complexity_threshold=0.3):
     stego_pil = Image.fromarray(stego_img)
     stego_pil.save("stego_image.png")
     print("[+] Data embedded and image saved as stego_image.png")
-embed_data_into_image("9apw622a7oj71.jpg","Hello")
+embed_data_into_image("9apw622a7oj71.jpg","Hello") #test image
