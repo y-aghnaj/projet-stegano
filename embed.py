@@ -1,93 +1,70 @@
 from PIL import Image
-import numpy as np
+
+END_MARKER = "~!@#END_OF_MSG@#~"
 
 
-def image_to_bitplanes(img):
-    """Split image into 8 bit-planes."""
-    bitplanes = []
-    for i in range(8):
-        bitplanes.append((img >> i) & 1)
-    return np.array(bitplanes)
-
-
-def bitplanes_to_image(bitplanes):
-    """Reconstruct image from bit-planes."""
-    img = np.zeros(bitplanes[0].shape, dtype=np.uint8)
-    for i in range(8):
-        img += (bitplanes[i] << i)
-    return img
-
-
-def block_complexity(block):
-    """Calculate block complexity (edge changes)."""
-    complexity = 0
-    rows, cols = block.shape
-    for i in range(rows):
-        for j in range(1, cols):
-            complexity += block[i, j] != block[i, j - 1]
-    for i in range(1, rows):
-        for j in range(cols):
-            complexity += block[i, j] != block[i - 1, j]
-    max_complexity = 2 * (rows - 1) * cols
-    return complexity / max_complexity
-
-
-def segment_blocks(bitplane, block_size=8):
-    """Yield 8x8 blocks with their positions."""
-    for i in range(0, bitplane.shape[0], block_size):
-        for j in range(0, bitplane.shape[1], block_size):
-            block = bitplane[i:i + block_size, j:j + block_size]
-            if block.shape == (block_size, block_size):
-                yield (i, j), block
-
-
-def embed_data_into_image(image_path, complexity_threshold=0.3):
+def embed_data_into_image(image_path):
     try:
-        # Load image
-        image = Image.open(image_path).convert('L')
-        img_np = np.array(image)
+        # Open the image
+        img = Image.open(image_path)
+        mode = img.mode  # Get the mode of the image (e.g., 'RGB' or 'L')
+        print(f"Image mode: {mode}")  # Debugging: Print the image mode
 
-        # Load secret from input.txt
-        with open("input.txt", "r", encoding="utf-8") as f:
-            secret_data = f.read().strip()
+        width, height = img.size
+        pixels = img.load()
 
-        if not secret_data:
-            raise ValueError("input.txt is empty. Nothing to embed.")
+        # Read the message from the input.txt file
+        with open("input.txt", "r", encoding="utf-8") as file:
+            secret_message = file.read()
 
-        # Add end marker
-        secret_data += "~END~"
-        secret_bits = ''.join(format(ord(c), '08b') for c in secret_data)
-        secret_index = 0
+        # Append the end marker to the message
+        secret_message += END_MARKER
 
-        bitplanes = image_to_bitplanes(img_np)
+        # Convert the message into binary format
+        binary_secret_msg = ''.join(format(ord(char), '08b') for char in secret_message)
 
-        for plane in range(4, 8):
-            for (i, j), block in segment_blocks(bitplanes[plane]):
-                if secret_index >= len(secret_bits):
+        # Check if the image has enough capacity for the message
+        #max_bytes = (width * height * (3 if mode == 'RGB' else 1))  # 3 for RGB, 1 for grayscale (BW)
+        #if len(binary_secret_msg) > max_bytes:
+            #raise ValueError("Message is too large for this image.")
+
+        print(f"Message length (characters): {len(secret_message)}")
+        print(f"Message length (bits): {len(binary_secret_msg)}")
+
+
+        data_index = 0
+        for y in range(height):
+            for x in range(width):
+                if data_index >= len(binary_secret_msg):
                     break
-                if block_complexity(block) >= complexity_threshold:
-                    new_block = block.copy()
-                    bits = secret_bits[secret_index:secret_index + 8]
-                    if len(bits) < 8:
-                        bits = bits.ljust(8, '0')
-                    flat = new_block.flatten()
-                    for k in range(8):
-                        flat[k] = int(bits[k])
-                    bitplanes[plane][i:i + 8, j:j + 8] = flat.reshape((8, 8))
-                    secret_index += 8
 
-        if secret_index < len(secret_bits):
-            raise ValueError("Not enough complex blocks to embed full message.")
+                pixel_value = pixels[x, y]
 
-        stego_img = bitplanes_to_image(bitplanes)
-        Image.fromarray(stego_img).save("stego_image.png")
-        print("[+] Data embedded successfully into stego_image.png")
+                if mode == 'RGB':
+                    # Modify the least significant bit of each RGB channel
+                    r, g, b = pixel_value
+                    r = (r & ~1) | int(binary_secret_msg[data_index])
+                    data_index += 1
+                    if data_index < len(binary_secret_msg):
+                        g = (g & ~1) | int(binary_secret_msg[data_index])
+                        data_index += 1
+                    if data_index < len(binary_secret_msg):
+                        b = (b & ~1) | int(binary_secret_msg[data_index])
+                        data_index += 1
+                    pixels[x, y] = (r, g, b)
 
-    except FileNotFoundError:
-        print("[!] input.txt or image file not found.")
+                elif mode == 'L':
+                    # Modify the least significant bit of the grayscale pixel value
+                    pixel_value = (pixel_value & ~1) | int(binary_secret_msg[data_index])
+                    data_index += 1
+                    pixels[x, y] = pixel_value
+
+            if data_index >= len(binary_secret_msg):
+                break
+
+        # Save the modified image
+        img.save("stego_image.png")
+        print(f"Data embedded. {len(binary_secret_msg)} bits were embedded into the image.")
+
     except Exception as e:
-        print(f"[!] Error during embedding: {e}")
-
-
-if __name__ == "__main__":
-    embed_data_into_image("input.jpg")  #test image
+        print(f"Error: {e}")

@@ -1,73 +1,59 @@
 from PIL import Image
-import numpy as np
 
-def image_to_bitplanes(img):
-    """Split image into 8 bit-planes."""
-    bitplanes = []
-    for i in range(8):
-        bitplanes.append((img >> i) & 1)
-    return np.array(bitplanes)
+# Define the end marker
+END_MARKER = "~!@#END_OF_MSG@#~"
 
-def block_complexity(block):
-    """Calculate block complexity (edge changes)."""
-    complexity = 0
-    rows, cols = block.shape
-    for i in range(rows):
-        for j in range(1, cols):
-            complexity += block[i, j] != block[i, j - 1]
-    for i in range(1, rows):
-        for j in range(cols):
-            complexity += block[i, j] != block[i - 1, j]
-    max_complexity = 2 * (rows - 1) * cols
-    return complexity / max_complexity
 
-def segment_blocks(bitplane, block_size=8):
-    """Yield 8x8 blocks with their positions."""
-    for i in range(0, bitplane.shape[0], block_size):
-        for j in range(0, bitplane.shape[1], block_size):
-            block = bitplane[i:i+block_size, j:j+block_size]
-            if block.shape == (block_size, block_size):
-                yield (i, j), block
-
-def extract_data_from_image(stego_image_path, complexity_threshold=0.3):
+def extract_data_from_image(image_path):
     try:
-        image = Image.open(stego_image_path).convert('L')
-        img_np = np.array(image)
-        bitplanes = image_to_bitplanes(img_np)
+        # Open the image and convert it to RGB
+        img = Image.open(image_path)
+        img = img.convert('RGB')  # Ensure the image is in RGB mode
 
-        secret_bits = ''
-        for plane in range(4, 8):
-            for (i, j), block in segment_blocks(bitplanes[plane]):
-                if block_complexity(block) >= complexity_threshold:
-                    flat = block.flatten()
-                    bits = ''.join(str(flat[k]) for k in range(8))
-                    secret_bits += bits
+        # Get image size
+        width, height = img.size
 
-        # Convert bits to characters until ~END~
-        secret_message = ''
-        for i in range(0, len(secret_bits), 8):
-            byte = secret_bits[i:i+8]
-            if len(byte) == 8:
-                char = chr(int(byte, 2))
-                secret_message += char
-                if secret_message.endswith("~END~"):
-                    secret_message = secret_message[:-5]
-                    break
+        binary_data = ''
+        for row in range(height):
+            for col in range(width):
+                r, g, b = img.getpixel((col, row))
 
-        if "~END~" not in secret_message + "~END~":
-            raise ValueError("End marker '~END~' not found. Message may be incomplete or corrupted.")
+                # Extract the least significant bit of each color channel (r, g, b)
+                binary_data += str(r & 1)
+                binary_data += str(g & 1)
+                binary_data += str(b & 1)
 
+        print(f"Extracted binary data length: {len(binary_data)} bits")
+        print(
+            f"Extracted binary data (first 100 bits): {binary_data[:100]}")  # Debug print to check the start of the binary data
+
+        # Now, convert the binary data to a string message
+        message = ''
+        for i in range(0, len(binary_data), 8):
+            byte = binary_data[i:i + 8]
+            if len(byte) < 8:  # Padding if the last byte is shorter
+                byte = byte.ljust(8, '0')
+            message += chr(int(byte, 2))
+
+        # Debugging the extracted message and checking for end marker
+        print(f"Extracted message length: {len(message)} characters")
+        print(f"Extracted message (first 100 characters): {message[:100]}")  # Check the beginning of the message
+
+        # Check if the end marker is present
+        if END_MARKER in message:
+            end_marker_position = message.find(END_MARKER)
+            print(f"End marker found at position {end_marker_position}")
+            # Extract message before the end marker
+            message = message.split(END_MARKER)[0]
+            print(
+                f"Extracted message up to the end marker (first 100 chars): {message[:100]}")  # First 100 chars after splitting
+        else:
+            print("Error: End marker not found. The image may not contain valid hidden data.")
+
+        # Write the extracted message to an output file
         with open("output.txt", "w", encoding="utf-8") as f:
-            f.write(secret_message)
+            f.write(message)
+            print("Data extracted and written to output.txt.")
 
-        print("[+] Message extracted successfully into output.txt")
-
-    except FileNotFoundError:
-        print("[!] stego_image.png not found.")
     except Exception as e:
-        print(f"[!] Error during extraction: {e}")
-
-
-# Example usage
-if __name__ == "__main__":
-    extract_data_from_image("stego_image.png")
+        print(f"Error during extraction: {e}")
