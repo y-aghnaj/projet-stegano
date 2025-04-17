@@ -9,13 +9,6 @@ def image_to_bitplanes(img):
     return np.array(bitplanes)
 
 
-def bitplanes_to_image(bitplanes):
-    img = np.zeros(bitplanes[0].shape, dtype=np.uint8)
-    for i in range(8):
-        img += (bitplanes[i] << i)
-    return img
-
-
 def block_complexity(block):
     complexity = 0
     rows, cols = block.shape
@@ -37,21 +30,11 @@ def segment_blocks(bitplane, block_size=8):
                 yield (i, j), block
 
 
-def embed_data_into_image(image_path, complexity_threshold=0.3):
+def extract_data_from_image(stego_image_path, complexity_threshold=0.3):
     try:
-        image = Image.open(image_path)
+        image = Image.open(stego_image_path)
         mode = image.mode
         print(f"Image mode: {mode}")
-
-        with open("input.txt", "r", encoding="utf-8") as f:
-            secret_data = f.read().strip()
-
-        if not secret_data:
-            raise ValueError("input.txt is empty. Nothing to embed.")
-
-        secret_data += "~END~"
-        secret_bits = ''.join(format(ord(c), '08b') for c in secret_data)
-        secret_index = 0
 
         if mode == 'L':
             channels = [np.array(image)]
@@ -60,39 +43,40 @@ def embed_data_into_image(image_path, complexity_threshold=0.3):
         else:
             raise ValueError("Only 'L' (grayscale) and 'RGB' images are supported.")
 
-        for idx, channel in enumerate(channels):
+        secret_bits = ''
+        for channel in channels:
             bitplanes = image_to_bitplanes(channel)
             for plane in range(4, 8):
                 for (i, j), block in segment_blocks(bitplanes[plane]):
-                    if secret_index >= len(secret_bits):
-                        break
                     if block_complexity(block) >= complexity_threshold:
                         flat = block.flatten()
-                        bits = secret_bits[secret_index:secret_index + 8].ljust(8, '0')
-                        for k in range(8):
-                            flat[k] = int(bits[k])
-                        bitplanes[plane][i:i + 8, j:j + 8] = flat.reshape((8, 8))
-                        secret_index += 8
-                if secret_index >= len(secret_bits):
+                        bits = ''.join(str(flat[k]) for k in range(8))
+                        secret_bits += bits
+
+        secret_message = ''
+        for i in range(0, len(secret_bits), 8):
+            byte = secret_bits[i:i + 8]
+            if len(byte) == 8:
+                char = chr(int(byte, 2))
+                secret_message += char
+                if secret_message.endswith("~END~"):
+                    secret_message = secret_message[:-5]
                     break
-            channels[idx] = bitplanes_to_image(bitplanes)
 
-        if secret_index < len(secret_bits):
-            raise ValueError("Not enough complex blocks to embed full message.")
+        if "~END~" not in secret_message + "~END~":
+            raise ValueError("End marker '~END~' not found. Message may be incomplete or corrupted.")
 
-        if mode == 'RGB':
-            stego_img = np.stack(channels).transpose(1, 2, 0)
-        else:
-            stego_img = channels[0]
+        with open("output.txt", "w", encoding="utf-8") as f:
+            f.write(secret_message)
+            print(secret_message)
 
-        Image.fromarray(stego_img).save("stego_image.png")
-        print("[+] Data embedded successfully into stego_image.png")
+        print("[+] Message extracted successfully into output.txt")
 
     except FileNotFoundError:
-        print("[!] input.txt or image file not found.")
+        print("[!] stego_image.png not found.")
     except Exception as e:
-        print(f"[!] Error during embedding: {e}")
+        print(f"[!] Error during extraction: {e}")
 
 
 if __name__ == "__main__":
-    embed_data_into_image("input.jpg")
+    extract_data_from_image("stego_image.png")
