@@ -64,10 +64,15 @@ class StegoApp(QWidget):
             extract_data_from_image("stego_image.png")
             with open("output.txt", "r", encoding="utf-8") as f:
                 extracted = f.read()
-            self.text_edit.setPlainText(extracted)
-            QMessageBox.information(self, "Success", "Data extracted from stego_image.png")
+
+            # HTML formatting to change text size
+            formatted_text = f"<p style='font-size: 18pt;'>{extracted}</p>"
+
+            # Show the extracted message in a popup with customized text size
+            QMessageBox.information(self, "Extracted Message", formatted_text, QMessageBox.Ok)
         except Exception as e:
             QMessageBox.critical(self, "Extraction Failed", str(e))
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
