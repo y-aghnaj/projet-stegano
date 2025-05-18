@@ -12,6 +12,8 @@ def image_to_bitplanes(img):
 def block_complexity(block):
     complexity = 0
     rows, cols = block.shape
+
+
     for i in range(rows):
         for j in range(1, cols):
             complexity += block[i, j] != block[i, j - 1]

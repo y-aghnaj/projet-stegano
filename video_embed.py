@@ -1,108 +1,90 @@
-import os
 import cv2
+import os
 import numpy as np
 from Cryptodome.Cipher import AES
-from Cryptodome.Random import get_random_bytes
 from Cryptodome.Util.Padding import pad
-from embed import image_to_bitplanes, bitplanes_to_image, block_complexity, segment_blocks
+from hashlib import sha256
+from embed import image_to_bitplanes, block_complexity, segment_blocks
 
 # Constants
 START_MARKER = "~|BPCS_START|~"
 END_MARKER = "~|BPCS_END|~"
+MIN_CHUNK_SIZE = 1000  # in bits
+FRAME_INTERVAL = 12
+THRESHOLD = 0.3
 
 def encrypt_message(message: str, key: str) -> bytes:
-    """Encrypt the message with AES-CBC and markers."""
-    full_message = START_MARKER + message + END_MARKER
-    key_bytes = key.encode('utf-8')
-    if len(key_bytes) not in (16, 24, 32):
-        raise ValueError("Key must be 16, 24, or 32 bytes long.")
-    iv = get_random_bytes(16)
-    cipher = AES.new(key_bytes, AES.MODE_CBC, iv)
-    encrypted = cipher.encrypt(pad(full_message.encode('utf-8'), AES.block_size))
-    return iv + encrypted
+    key_bytes = sha256(key.encode()).digest()  # ensure 32-byte key
+    cipher = AES.new(key_bytes, AES.MODE_CBC)
+    ct_bytes = cipher.encrypt(pad(message.encode(), AES.block_size))
+    return cipher.iv + ct_bytes
 
 def bytes_to_bits(data: bytes) -> str:
-    """Convert bytes to a bitstring."""
-    return ''.join(f"{byte:08b}" for byte in data)
+    return ''.join(f'{byte:08b}' for byte in data)
 
-def fragment_bits(bitstring: str, bits_per_fragment: int = 512) -> list[str]:
-    """Split bitstring into small fragments."""
-    return [bitstring[i:i+bits_per_fragment] for i in range(0, len(bitstring), bits_per_fragment)]
+def embed_bits_in_frame(frame_rgb, bitstream, threshold=THRESHOLD):
+    embedded = 0
+    idx = 0
+    max_bits = len(bitstream)
+    channels = frame_rgb.transpose(2, 0, 1)  # R, G, B
 
-def embed_chunk_into_frame(frame_rgb: np.ndarray, chunk_bits: str, threshold: float = 0.3) -> np.ndarray | None:
-    """Embed one chunk of bits into a frame."""
-    channels = list(frame_rgb.transpose(2, 0, 1))  # R, G, B
-    bit_idx = 0
     for c in range(3):
-        planes = image_to_bitplanes(channels[c])
-        for plane in range(4, 8):  # only high planes
-            for (i, j), block in segment_blocks(planes[plane]):
-                if bit_idx >= len(chunk_bits):
-                    break
+        bitplanes = image_to_bitplanes(channels[c])
+        for plane in range(4, 8):
+            for (i, j), block in segment_blocks(bitplanes[plane]):
                 if block_complexity(block) >= threshold:
                     flat = block.flatten()
-                    byte = chunk_bits[bit_idx:bit_idx+8].ljust(8, '0')
                     for k in range(8):
-                        flat[k] = int(byte[k])
-                    planes[plane][i:i+8, j:j+8] = flat.reshape(8, 8)
-                    bit_idx += 8
-            if bit_idx >= len(chunk_bits):
+                        if idx < max_bits:
+                            flat[k] = int(bitstream[idx])
+                            idx += 1
+                            embedded += 1
+                        else:
+                            break
+                    bitplanes[plane][i:i+8, j:j+8] = flat.reshape((8, 8))
+                if idx >= max_bits:
+                    break
+            if idx >= max_bits:
                 break
-        channels[c] = bitplanes_to_image(planes)
-        if bit_idx >= len(chunk_bits):
-            break
-    if bit_idx < len(chunk_bits):
-        return None  # Not enough capacity
-    stego = np.stack(channels).transpose(1, 2, 0)
-    return stego
+        channels[c] = sum((bitplanes[b] << b for b in range(8)))
+    frame_rgb = np.stack(channels, axis=0).transpose(1, 2, 0)
+    return frame_rgb.astype(np.uint8), embedded
 
-def embed_in_video(
-    input_video_path: str,
-    output_video_path: str,
-    key: str,
-    message: str,
-    frame_interval: int = 12,
-    bits_per_fragment: int = 512
-):
-    """Main function to embed a secret message into a video."""
-    cap = cv2.VideoCapture(input_video_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open input video: {input_video_path}")
+def embed_message_in_video(video_path, output_path, message, key):
+    if not os.path.exists(video_path):
+        raise FileNotFoundError(f"Video not found: {video_path}")
 
-    width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps    = cap.get(cv2.CAP_PROP_FPS)
+    cap = cv2.VideoCapture(video_path)
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    width, height = int(cap.get(3)), int(cap.get(4))
 
-    ext = os.path.splitext(output_video_path)[1].lower()
-    fourcc = cv2.VideoWriter_fourcc(*('mp4v' if ext in ('.mp4', '.mov') else 'XVID'))
-    out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
+    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
-    # Encrypt and fragment message
-    encrypted_data = encrypt_message(message, key)
-    bitstream = bytes_to_bits(encrypted_data)
-    fragments = fragment_bits(bitstream, bits_per_fragment)
+    encrypted = encrypt_message(START_MARKER + message + END_MARKER, key)
+    bitstream = bytes_to_bits(encrypted)
 
-    print(f"[+] Total fragments to embed: {len(fragments)}")
+    chunks = [bitstream[i:i+MIN_CHUNK_SIZE] for i in range(0, len(bitstream), MIN_CHUNK_SIZE)]
+    print(f"[+] Encrypted message split into {len(chunks)} chunks of {MIN_CHUNK_SIZE} bits")
 
+    chunk_idx = 0
     frame_idx = 0
-    fragment_idx = 0
+    total_embedded = 0
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        if frame_idx % frame_interval == 0 and fragment_idx < len(fragments):
+        if chunk_idx < len(chunks) and frame_idx % FRAME_INTERVAL == 0:
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            stego_rgb = embed_chunk_into_frame(rgb, fragments[fragment_idx])
-            if stego_rgb is not None:
-                bgr_stego = cv2.cvtColor(stego_rgb, cv2.COLOR_RGB2BGR)
-                out.write(bgr_stego)
-                print(f"[+] Fragment {fragment_idx + 1}/{len(fragments)} embedded at frame {frame_idx}")
-                fragment_idx += 1
-            else:
-                print(f"[!] Warning: could not embed fragment {fragment_idx + 1} at frame {frame_idx} (complexity issue)")
-                out.write(frame)  # Write original frame
+            modified, bits_written = embed_bits_in_frame(rgb, chunks[chunk_idx])
+            total_embedded += bits_written
+            chunk_idx += 1
+            print(f"[+] Frame {frame_idx} | Embedded chunk {chunk_idx}/{len(chunks)} ({bits_written} bits)")
+
+            bgr = cv2.cvtColor(modified, cv2.COLOR_RGB2BGR)
+            out.write(bgr)
         else:
             out.write(frame)
 
@@ -111,10 +93,8 @@ def embed_in_video(
     cap.release()
     out.release()
 
-    if fragment_idx < len(fragments):
-        raise ValueError(f"Failed to embed all fragments! Embedded {fragment_idx}/{len(fragments)}.")
-
-    print(f"[✓] Embedding complete: {fragment_idx}/{len(fragments)} fragments embedded into '{output_video_path}'.")
+    print(f"[✓] Finished embedding. Total bits embedded: {total_embedded}")
+    print(f"[✓] Output saved to '{output_path}'")
 
 if __name__ == "__main__":
     key = "59a4c722fb9d647d8ff9e5c1496a43d0"  # AES 128/192/256 bit key (must match extraction)
@@ -128,22 +108,8 @@ if __name__ == "__main__":
         with open(message_file, "r", encoding="utf-8") as f:
             message = f.read().strip()
         if message:
-            embed_in_video(input_video, output_video, key, message)
+            embed_message_in_video(input_video, output_video, message = message, key =key)
         else:
             print("[!] Error: input message file is empty.")
 
-if __name__ == "__main__":
-    key = "59a4c722fb9d647d8ff9e5c1496a43d0"
-    key_bytes = key.encode('utf-8')
-    message_file = "C://stegano//Luther extract.txt"
-    input_video = "C://stegano//test vid.mp4"
 
-    if not os.path.exists(message_file):
-        print(f"[!] {message_file} not found.")
-    else:
-        with open(message_file, "r", encoding="utf-8") as f:
-            message = f.read().strip()
-        if message:
-            embed_in_video(input_video, "stegano_video.mp4", key, message)
-        else:
-            print("[!] input.txt is empty.")
