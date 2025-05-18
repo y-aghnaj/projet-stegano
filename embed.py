@@ -1,40 +1,19 @@
 from PIL import Image
 import numpy as np
-
-
-def image_to_bitplanes(img):
-    bitplanes = []
-    for i in range(8):
-        bitplanes.append((img >> i) & 1)
-    return np.array(bitplanes)
-
-
-def bitplanes_to_image(bitplanes):
-    img = np.zeros(bitplanes[0].shape, dtype=np.uint8)
-    for i in range(8):
-        img += (bitplanes[i] << i)
-    return img
-
-
-def block_complexity(block):
-    complexity = 0
-    rows, cols = block.shape
-    for i in range(rows):
-        for j in range(1, cols):
-            complexity += block[i, j] != block[i, j - 1]
-    for i in range(1, rows):
-        for j in range(cols):
-            complexity += block[i, j] != block[i - 1, j]
-    max_complexity = 2 * (rows - 1) * cols
-    return complexity / max_complexity
+from bpcs import (
+    to_bit_planes, from_bit_planes,
+    is_complex, conjugate_block,
+    embed_block_into_plane,
+    start_marker, end_marker
+)
 
 
 def segment_blocks(bitplane, block_size=8):
-    for i in range(0, bitplane.shape[0], block_size):
-        for j in range(0, bitplane.shape[1], block_size):
-            block = bitplane[i:i + block_size, j:j + block_size]
+    for y in range(0, bitplane.shape[0], block_size):
+        for x in range(0, bitplane.shape[1], block_size):
+            block = bitplane[y:y + block_size, x:x + block_size]
             if block.shape == (block_size, block_size):
-                yield (i, j), block
+                yield (x, y), block
 
 
 def embed_data_into_image(image_path, complexity_threshold=0.3):
@@ -43,39 +22,44 @@ def embed_data_into_image(image_path, complexity_threshold=0.3):
         mode = image.mode
         print(f"Image mode: {mode}")
 
+        # Lecture du message secret
         with open("input.txt", "r", encoding="utf-8") as f:
             secret_data = f.read().strip()
 
         if not secret_data:
             raise ValueError("input.txt is empty. Nothing to embed.")
 
-        secret_data += "~END~"
+        # Ajout des marqueurs complexes autour du message
+        secret_data = start_marker + secret_data + end_marker
+
+        # Conversion en bits
         secret_bits = ''.join(format(ord(c), '08b') for c in secret_data)
         secret_index = 0
 
+        # Extraction des canaux image
         if mode == 'L':
             channels = [np.array(image)]
         elif mode == 'RGB':
             channels = list(np.array(image).transpose(2, 0, 1))
         else:
-            raise ValueError("Only 'L' (grayscale) and 'RGB' images are supported.")
+            raise ValueError("Only 'L' and 'RGB' images supported.")
 
         for idx, channel in enumerate(channels):
-            bitplanes = image_to_bitplanes(channel)
-            for plane in range(4, 8):
-                for (i, j), block in segment_blocks(bitplanes[plane]):
+            bitplanes = to_bit_planes(channel)
+            for plane in range(4, 8):  # Plans LSB
+                for (x, y), block in segment_blocks(bitplanes[:, :, plane]):
                     if secret_index >= len(secret_bits):
                         break
-                    if block_complexity(block) >= complexity_threshold:
-                        flat = block.flatten()
+                    if is_complex(block, complexity_threshold):
                         bits = secret_bits[secret_index:secret_index + 8].ljust(8, '0')
-                        for k in range(8):
-                            flat[k] = int(bits[k])
-                        bitplanes[plane][i:i + 8, j:j + 8] = flat.reshape((8, 8))
+                        bit_block = np.array([int(b) for b in bits], dtype=np.uint8).reshape((8, 1)).repeat(8, axis=1)
+                        if not is_complex(bit_block, complexity_threshold):
+                            bit_block = conjugate_block(bit_block)
+                        bitplanes[:, :, plane] = embed_block_into_plane(bitplanes[:, :, plane], bit_block, x, y)
                         secret_index += 8
                 if secret_index >= len(secret_bits):
                     break
-            channels[idx] = bitplanes_to_image(bitplanes)
+            channels[idx] = from_bit_planes(bitplanes)
 
         if secret_index < len(secret_bits):
             raise ValueError("Not enough complex blocks to embed full message.")
@@ -85,8 +69,8 @@ def embed_data_into_image(image_path, complexity_threshold=0.3):
         else:
             stego_img = channels[0]
 
-        Image.fromarray(stego_img).save("stego_image.png")
-        print("[+] Data embedded successfully into stego_image.png")
+        Image.fromarray(stego_img).save("temp_stego_image.png")
+        print("[+] Data embedded successfully into temp_stego_image.png")
 
     except FileNotFoundError:
         print("[!] input.txt or image file not found.")
