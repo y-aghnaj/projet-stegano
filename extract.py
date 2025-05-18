@@ -1,6 +1,6 @@
 from PIL import Image
 import numpy as np
-
+from video_utils import video_to_frames
 
 def image_to_bitplanes(img):
     bitplanes = []
@@ -77,6 +77,17 @@ def extract_data_from_image(stego_image_path, complexity_threshold=0.3):
     except Exception as e:
         print(f"[!] Error during extraction: {e}")
 
+def extract_data_from_video(video_path, complexity_threshold=0.3):
+    frame_folder = "extracted_frames"
+    frames = video_to_frames(video_path, frame_folder)
+    if not frames:
+        print("[!] No frames extracted from video.")
+        return
+
+    first_frame_path = frames[0]
+    extract_data_from_image(first_frame_path, complexity_threshold)
+
+    print("[+] Data extracted from first frame of video.")
 
 if __name__ == "__main__":
     extract_data_from_image("stego_image.png")

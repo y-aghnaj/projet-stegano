@@ -1,6 +1,6 @@
 from PIL import Image
 import numpy as np
-
+from video_utils import video_to_frames, frames_to_video
 
 def image_to_bitplanes(img):
     bitplanes = []
@@ -93,6 +93,30 @@ def embed_data_into_image(image_path, complexity_threshold=0.3):
     except Exception as e:
         print(f"[!] Error during embedding: {e}")
 
+def embed_data_into_video(video_path, complexity_threshold=0.3):
+    frame_folder = "video_frames"
+    frames = video_to_frames(video_path, frame_folder)
+    if not frames:
+        print("[!] No frames extracted from video.")
+        return
+
+    # Embed data into first frame only for now
+    first_frame_path = frames[0]
+
+    # For embedding, we rely on existing function with slight modification:
+    # Save input.txt as secret message and embed in first frame image.
+    try:
+        embed_data_into_image(first_frame_path, complexity_threshold)
+    except Exception as e:
+        print(f"[!] Embedding failed: {e}")
+        return
+
+    # Rebuild video with the stego first frame
+    output_video_path = "stego_video.mp4"
+    frames_to_video(frame_folder, output_video_path)
+
+    print(f"[+] Data embedded into video and saved as {output_video_path}")
 
 if __name__ == "__main__":
-    embed_data_into_image("input.jpg")
+    embed_data_into_video("input_video.mp4")
+
