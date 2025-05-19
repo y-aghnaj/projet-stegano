@@ -1,11 +1,11 @@
 import sys
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QLabel, QTextEdit, QPushButton, QFileDialog, QVBoxLayout, QMessageBox, QDialog
+    QApplication, QWidget, QLabel, QTextEdit, QPushButton, QFileDialog,
+    QVBoxLayout, QMessageBox, QDialog, QScrollArea
 )
-from embed import embed_data_into_image
-from extract import extract_data_from_image
-from embed_video import embed_data_into_video
-from extract_video import extract_data_from_video
+from embed import embed_data_into_image, embed_data_into_video
+from extract import extract_data_from_image, extract_data_from_video
+
 
 class StegoApp(QWidget):
     def __init__(self):
@@ -13,15 +13,18 @@ class StegoApp(QWidget):
         self.setWindowTitle("BPCS Steganography")
         self.setGeometry(300, 300, 500, 500)
 
+        # Layout setup
         self.layout = QVBoxLayout()
         self.setLayout(self.layout)
 
+        # Label and text editor for secret message input
         self.label = QLabel("Secret Message:")
         self.layout.addWidget(self.label)
 
         self.text_edit = QTextEdit()
         self.layout.addWidget(self.text_edit)
 
+        # File selection and operation buttons
         self.load_button = QPushButton("Select Cover File (Image/Video)")
         self.load_button.clicked.connect(self.select_file)
         self.layout.addWidget(self.load_button)
@@ -34,13 +37,13 @@ class StegoApp(QWidget):
         self.extract_button.clicked.connect(self.extract)
         self.layout.addWidget(self.extract_button)
 
-        # Keep track of selected file and its type
+        # Track selected file path and type
         self.cover_file_path = None
         self.file_type = None  # 'image' or 'video'
 
     def select_file(self):
         fname, _ = QFileDialog.getOpenFileName(
-            self, "Select Cover File", "", "Images (*.png *.jpg);;Videos (*.mp4 *.avi)"
+            self, "Select Cover File", "", "Images (*.png *.jpg *.jpeg);;Videos (*.mp4 *.avi)"
         )
         if fname:
             self.cover_file_path = fname
@@ -96,15 +99,20 @@ class StegoApp(QWidget):
 
             layout = QVBoxLayout(dialog)
 
-            text_edit = QTextEdit(dialog)
+            scroll_area = QScrollArea()
+            text_edit = QTextEdit()
             text_edit.setReadOnly(True)
             text_edit.setText(extracted)
-            layout.addWidget(text_edit)
+            scroll_area.setWidget(text_edit)
+            scroll_area.setWidgetResizable(True)
+
+            layout.addWidget(scroll_area)
 
             close_button = QPushButton("Close", dialog)
             close_button.clicked.connect(dialog.accept)
             layout.addWidget(close_button)
 
+            dialog.setLayout(layout)
             dialog.exec_()
 
         except FileNotFoundError:

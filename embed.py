@@ -2,33 +2,36 @@ from PIL import Image
 import numpy as np
 from video_utils import video_to_frames, frames_to_video
 
+# Convert image into its 8 bit-planes (from LSB to MSB)
 def image_to_bitplanes(img):
     bitplanes = []
     for i in range(8):
         bitplanes.append((img >> i) & 1)
     return np.array(bitplanes)
 
-
+# Reconstruct image from its bit-planes
 def bitplanes_to_image(bitplanes):
     img = np.zeros(bitplanes[0].shape, dtype=np.uint8)
     for i in range(8):
         img += (bitplanes[i] << i)
     return img
 
-
+# Calculate normalized complexity of a block (used to determine embed suitability)
 def block_complexity(block):
     complexity = 0
     rows, cols = block.shape
+    # Count horizontal transitions
     for i in range(rows):
         for j in range(1, cols):
             complexity += block[i, j] != block[i, j - 1]
+    # Count vertical transitions
     for i in range(1, rows):
         for j in range(cols):
             complexity += block[i, j] != block[i - 1, j]
     max_complexity = 2 * (rows - 1) * cols
     return complexity / max_complexity
 
-
+# Yield all 8x8 blocks from a bitplane
 def segment_blocks(bitplane, block_size=8):
     for i in range(0, bitplane.shape[0], block_size):
         for j in range(0, bitplane.shape[1], block_size):
@@ -36,23 +39,26 @@ def segment_blocks(bitplane, block_size=8):
             if block.shape == (block_size, block_size):
                 yield (i, j), block
 
-
+# Embed secret data into an image using BPCS method
 def embed_data_into_image(image_path, complexity_threshold=0.3):
     try:
         image = Image.open(image_path)
         mode = image.mode
         print(f"Image mode: {mode}")
 
+        # Read secret message from file
         with open("input.txt", "r", encoding="utf-8") as f:
             secret_data = f.read().strip()
 
         if not secret_data:
             raise ValueError("input.txt is empty. Nothing to embed.")
 
+        # Append end marker
         secret_data += "~END~"
         secret_bits = ''.join(format(ord(c), '08b') for c in secret_data)
         secret_index = 0
 
+        # Convert image to channels depending on mode
         if mode == 'L':
             channels = [np.array(image)]
         elif mode == 'RGB':
@@ -60,9 +66,10 @@ def embed_data_into_image(image_path, complexity_threshold=0.3):
         else:
             raise ValueError("Only 'L' (grayscale) and 'RGB' images are supported.")
 
+        # Iterate over channels and bit-planes to embed data
         for idx, channel in enumerate(channels):
             bitplanes = image_to_bitplanes(channel)
-            for plane in range(4, 8):
+            for plane in range(4, 8):  # Use high bitplanes only
                 for (i, j), block in segment_blocks(bitplanes[plane]):
                     if secret_index >= len(secret_bits):
                         break
@@ -77,9 +84,11 @@ def embed_data_into_image(image_path, complexity_threshold=0.3):
                     break
             channels[idx] = bitplanes_to_image(bitplanes)
 
+        # Check if all bits were embedded
         if secret_index < len(secret_bits):
             raise ValueError("Not enough complex blocks to embed full message.")
 
+        # Merge channels back and save stego image
         if mode == 'RGB':
             stego_img = np.stack(channels).transpose(1, 2, 0)
         else:
@@ -93,6 +102,7 @@ def embed_data_into_image(image_path, complexity_threshold=0.3):
     except Exception as e:
         print(f"[!] Error during embedding: {e}")
 
+# Embed data into the first frame of a video
 def embed_data_into_video(video_path, complexity_threshold=0.3):
     frame_folder = "video_frames"
     frames = video_to_frames(video_path, frame_folder)
@@ -100,23 +110,22 @@ def embed_data_into_video(video_path, complexity_threshold=0.3):
         print("[!] No frames extracted from video.")
         return
 
-    # Embed data into first frame only for now
+    # Use only the first frame for embedding
     first_frame_path = frames[0]
 
-    # For embedding, we rely on existing function with slight modification:
-    # Save input.txt as secret message and embed in first frame image.
     try:
+        # Embed data into the first frame image file itself
         embed_data_into_image(first_frame_path, complexity_threshold)
     except Exception as e:
         print(f"[!] Embedding failed: {e}")
         return
 
-    # Rebuild video with the stego first frame
+    # Rebuild video from updated frames (first frame now modified)
     output_video_path = "stego_video.mp4"
     frames_to_video(frame_folder, output_video_path)
 
     print(f"[+] Data embedded into video and saved as {output_video_path}")
 
+# Run embedding on default input video
 if __name__ == "__main__":
     embed_data_into_video("input_video.mp4")
-

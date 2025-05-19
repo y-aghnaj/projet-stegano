@@ -1,6 +1,7 @@
 import cv2
 import os
 
+# Convert video into frames and save them as PNG images
 def video_to_frames(video_path, output_folder):
     os.makedirs(output_folder, exist_ok=True)
     cap = cv2.VideoCapture(video_path)
@@ -17,6 +18,7 @@ def video_to_frames(video_path, output_folder):
     cap.release()
     return frame_paths
 
+# Rebuild a video from frame images
 def frames_to_video(frame_folder, output_video_path, fps=30):
     frames = sorted(
         [os.path.join(frame_folder, f) for f in os.listdir(frame_folder) if f.endswith(".png")]
@@ -26,7 +28,7 @@ def frames_to_video(frame_folder, output_video_path, fps=30):
 
     frame = cv2.imread(frames[0])
     height, width, layers = frame.shape
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # or 'XVID'
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     video = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
 
     for frame_path in frames:
