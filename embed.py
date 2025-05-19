@@ -1,43 +1,7 @@
 from PIL import Image
 import numpy as np
 from video_utils import video_to_frames, frames_to_video
-
-# Convert image into its 8 bit-planes (from LSB to MSB)
-def image_to_bitplanes(img):
-    bitplanes = []
-    for i in range(8):
-        bitplanes.append((img >> i) & 1)
-    return np.array(bitplanes)
-
-# Reconstruct image from its bit-planes
-def bitplanes_to_image(bitplanes):
-    img = np.zeros(bitplanes[0].shape, dtype=np.uint8)
-    for i in range(8):
-        img += (bitplanes[i] << i)
-    return img
-
-# Calculate normalized complexity of a block (used to determine embed suitability)
-def block_complexity(block):
-    complexity = 0
-    rows, cols = block.shape
-    # Count horizontal transitions
-    for i in range(rows):
-        for j in range(1, cols):
-            complexity += block[i, j] != block[i, j - 1]
-    # Count vertical transitions
-    for i in range(1, rows):
-        for j in range(cols):
-            complexity += block[i, j] != block[i - 1, j]
-    max_complexity = 2 * (rows - 1) * cols
-    return complexity / max_complexity
-
-# Yield all 8x8 blocks from a bitplane
-def segment_blocks(bitplane, block_size=8):
-    for i in range(0, bitplane.shape[0], block_size):
-        for j in range(0, bitplane.shape[1], block_size):
-            block = bitplane[i:i + block_size, j:j + block_size]
-            if block.shape == (block_size, block_size):
-                yield (i, j), block
+from bpcs_util import image_to_bitplanes, block_complexity,segment_blocks, bitplanes_to_image
 
 # Embed secret data into an image using BPCS method
 def embed_data_into_image(image_path, complexity_threshold=0.3):
@@ -110,7 +74,7 @@ def embed_data_into_video(video_path, complexity_threshold=0.3):
         print("[!] No frames extracted from video.")
         return
 
-    # Use only the first frame for embedding
+    # Use only the first frame for embedding, since n-th frame breaks the code
     first_frame_path = frames[0]
 
     try:
@@ -121,7 +85,7 @@ def embed_data_into_video(video_path, complexity_threshold=0.3):
         return
 
     # Rebuild video from updated frames (first frame now modified)
-    output_video_path = "stego_video.mp4"
+    output_video_path = "stego_video.mp4" # Might want to make it into a variable.
     frames_to_video(frame_folder, output_video_path)
 
     print(f"[+] Data embedded into video and saved as {output_video_path}")
